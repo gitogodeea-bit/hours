@@ -681,7 +681,11 @@ $('btnInstall').addEventListener('click', async () => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js').catch((err) => console.warn('SW failed', err));
+    // updateViaCache:'none' - otherwise the browser can hand back a stale sw.js from its
+    // own HTTP cache, and a superseded worker keeps serving a superseded app.
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then((reg) => reg.update())
+      .catch((err) => console.warn('SW failed', err));
   });
 }
 

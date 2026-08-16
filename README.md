@@ -71,9 +71,32 @@ https, so installing works there too.
 
 ## Changing the app later
 
-If you edit `app.css`, `app.js` or `index.html`, **bump `CACHE` in `sw.js`**
-(`hours-v1` → `hours-v2`). Phones that already have it cached will otherwise keep serving
-the old files.
+If you edit `app.css`, `app.js` or `index.html`:
+
+1. **Bump `CACHE` in `sw.js`** (`hours-v2` → `hours-v3`).
+2. **Bump the `?v=` on the `app.css` / `app.js` links in `index.html`**, and match them in
+   the `SHELL` list in `sw.js`.
+3. Bump the build number in the `<p class="version">` line, so the phone can be asked which
+   build it is actually running.
+4. Commit and `git push origin main`. Pages rebuilds in a minute or two.
+
+The worker is network-first, so a fresh copy wins whenever there is signal; the cache is
+only the offline fallback. That is deliberate — cache-first meant a broken build pinned
+itself on the phone and could not be fixed remotely.
+
+## Browser support — the one that bit
+
+**Build 1 did not start at all on Samsung Internet.** The page rendered, and every tap did
+nothing. The cause was `structuredClone()`, which does not exist below Chromium 98 and was
+the first call made on startup, so the whole script died before a single event handler was
+attached — and the `catch` block called it again, so it could not recover either.
+
+Two lessons baked into the code:
+
+- Stick to widely-supported APIs. This app deliberately uses nothing newer than about 2019.
+- `index.html` carries a small inline `window.onerror` handler that prints the failure in a
+  red box at the top of the screen. A silent failure looks identical to a working app on a
+  phone you cannot open a console on.
 
 ## Regenerating the icons
 
