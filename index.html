@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hours</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0e6f6e" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b1417" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="topbar">
+  <h1 id="viewTitle">Now</h1>
+  <span id="topNote" class="top-note"></span>
+</header>
+
+<main>
+
+  <!-- ───────────────────────── NOW ───────────────────────── -->
+  <section class="view" id="view-now">
+
+    <div id="staleWarn" class="warn" hidden>
+      <div>
+        <strong>Still clocked in</strong>
+        <p id="staleWarnText"></p>
+      </div>
+      <button class="btn small" id="fixStale" type="button">Fix it</button>
+    </div>
+
+    <div class="clock-wrap">
+      <p class="clock-state" id="clockState">Not clocked in</p>
+      <p class="clock-elapsed" id="clockElapsed">00:00:00</p>
+      <p class="clock-since" id="clockSince"></p>
+
+      <button class="clock-btn" id="clockBtn" type="button">
+        <span id="clockBtnLabel">Clock in</span>
+      </button>
+
+      <p class="clock-rate" id="clockRate"></p>
+    </div>
+
+    <div class="totals">
+      <div class="total-card">
+        <span class="total-label">Today</span>
+        <strong class="total-value" id="totalToday">0h 00m</strong>
+        <span class="total-sub" id="payToday"></span>
+      </div>
+      <div class="total-card">
+        <span class="total-label">This week</span>
+        <strong class="total-value" id="totalWeek">0h 00m</strong>
+        <span class="total-sub" id="payWeek"></span>
+      </div>
+      <div class="total-card">
+        <span class="total-label">This month</span>
+        <strong class="total-value" id="totalMonth">0h 00m</strong>
+        <span class="total-sub" id="payMonth"></span>
+      </div>
+    </div>
+
+    <button class="btn ghost wide" id="addShiftNow" type="button">+ Add a shift by hand</button>
+  </section>
+
+  <!-- ──────────────────────── SHIFTS ──────────────────────── -->
+  <section class="view" id="view-shifts" hidden>
+    <div id="shiftList"></div>
+    <p class="empty" id="shiftsEmpty" hidden>No shifts yet.<br><span>Clock in on the Now tab, or add one by hand.</span></p>
+    <div class="spacer"></div>
+  </section>
+
+  <!-- ──────────────────────── REPORT ──────────────────────── -->
+  <section class="view" id="view-report" hidden>
+    <div class="chips" id="periodChips">
+      <button class="chip" data-period="week" type="button">This week</button>
+      <button class="chip is-on" data-period="month" type="button">This month</button>
+      <button class="chip" data-period="lastmonth" type="button">Last month</button>
+      <button class="chip" data-period="custom" type="button">Custom</button>
+    </div>
+
+    <div class="custom-range" id="customRange" hidden>
+      <label>From <input type="date" id="rangeFrom"></label>
+      <label>To <input type="date" id="rangeTo"></label>
+    </div>
+
+    <p class="range-label" id="rangeLabel"></p>
+
+    <div class="report-hero">
+      <div>
+        <span class="total-label">Hours worked</span>
+        <strong class="hero-value" id="repHours">0h 00m</strong>
+      </div>
+      <div>
+        <span class="total-label">Gross pay</span>
+        <strong class="hero-value" id="repPay">£0.00</strong>
+      </div>
+    </div>
+    <p class="hero-sub" id="repSub"></p>
+
+    <div class="report-table" id="repTable"></div>
+
+    <div class="report-actions">
+      <button class="btn" id="btnShare" type="button" hidden>Share</button>
+      <button class="btn" id="btnCopy" type="button">Copy summary</button>
+      <button class="btn ghost" id="btnCsv" type="button">Download CSV</button>
+    </div>
+    <div class="spacer"></div>
+  </section>
+
+  <!-- ─────────────────────── SETTINGS ─────────────────────── -->
+  <section class="view" id="view-settings" hidden>
+
+    <div class="card">
+      <h2>Pay</h2>
+      <label class="field">
+        <span>Hourly rate</span>
+        <input type="number" id="setRate" inputmode="decimal" step="0.01" min="0">
+      </label>
+      <label class="field">
+        <span>Currency symbol</span>
+        <input type="text" id="setCurrency" maxlength="3" size="3">
+      </label>
+      <p class="hint">New shifts use this rate. Shifts you have already saved keep the rate they were saved with, so old reports do not change when you get a rise.</p>
+      <button class="btn ghost wide" id="btnBulkRate" type="button">Apply this rate to a date range…</button>
+    </div>
+
+    <div class="card">
+      <h2>Defaults</h2>
+      <label class="field">
+        <span>Unpaid break (minutes)</span>
+        <input type="number" id="setBreak" inputmode="numeric" step="5" min="0">
+      </label>
+      <label class="field">
+        <span>Week starts on</span>
+        <select id="setWeekStart">
+          <option value="1">Monday</option>
+          <option value="0">Sunday</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="card">
+      <h2>Your data</h2>
+      <p class="hint">Everything is stored on this phone only. Nothing is sent anywhere, and there is no account. If you clear the browser's storage or lose the phone, the data goes with it — so export a backup now and then.</p>
+      <button class="btn ghost wide" id="btnExport" type="button">Export backup (.json)</button>
+      <button class="btn ghost wide" id="btnImport" type="button">Restore from backup…</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+      <button class="btn danger wide" id="btnWipe" type="button">Erase everything</button>
+    </div>
+
+    <div class="card" id="installCard" hidden>
+      <h2>Install</h2>
+      <p class="hint">Add this to your home screen so it opens like a normal app.</p>
+      <button class="btn wide" id="btnInstall" type="button">Install app</button>
+    </div>
+
+    <p class="version">Hours · v1</p>
+    <div class="spacer"></div>
+  </section>
+
+</main>
+
+<nav class="tabbar">
+  <button class="tab is-on" data-view="now" type="button"><span class="tab-ico">⏱</span>Now</button>
+  <button class="tab" data-view="shifts" type="button"><span class="tab-ico">☰</span>Shifts</button>
+  <button class="tab" data-view="report" type="button"><span class="tab-ico">£</span>Report</button>
+  <button class="tab" data-view="settings" type="button"><span class="tab-ico">⚙</span>Settings</button>
+</nav>
+
+<!-- ───────────────────── shift editor ───────────────────── -->
+<dialog id="shiftDialog">
+  <form method="dialog" id="shiftForm">
+    <h2 id="shiftDialogTitle">Edit shift</h2>
+
+    <label class="field">
+      <span>Date</span>
+      <input type="date" id="fDate" required>
+    </label>
+    <div class="field-row">
+      <label class="field">
+        <span>Start</span>
+        <input type="time" id="fStart" required>
+      </label>
+      <label class="field">
+        <span>End</span>
+        <input type="time" id="fEnd" required>
+      </label>
+    </div>
+    <div class="field-row">
+      <label class="field">
+        <span>Unpaid break (min)</span>
+        <input type="number" id="fBreak" inputmode="numeric" step="5" min="0">
+      </label>
+      <label class="field">
+        <span>Rate</span>
+        <input type="number" id="fRate" inputmode="decimal" step="0.01" min="0">
+      </label>
+    </div>
+    <label class="field">
+      <span>Note (optional)</span>
+      <input type="text" id="fNote" maxlength="60" placeholder="e.g. covered for Kate">
+    </label>
+
+    <p class="calc" id="fCalc"></p>
+
+    <div class="dialog-actions">
+      <button class="btn danger" value="delete" id="fDelete" type="submit" formnovalidate>Delete</button>
+      <button class="btn ghost" value="cancel" type="submit" formnovalidate>Cancel</button>
+      <button class="btn" value="save" id="fSave" type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- ───────────────── bulk rate change ───────────────── -->
+<dialog id="bulkDialog">
+  <form method="dialog" id="bulkForm">
+    <h2>Apply rate to a range</h2>
+    <p class="hint" id="bulkHint"></p>
+    <div class="field-row">
+      <label class="field"><span>From</span><input type="date" id="bFrom" required></label>
+      <label class="field"><span>To</span><input type="date" id="bTo" required></label>
+    </div>
+    <div class="dialog-actions">
+      <button class="btn ghost" value="cancel" type="submit" formnovalidate>Cancel</button>
+      <button class="btn" value="apply" type="submit">Apply</button>
+    </div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
