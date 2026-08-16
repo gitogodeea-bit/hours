@@ -3,12 +3,21 @@
 
 const KEY = 'hours.v1';
 
-const DEFAULTS = {
-  v: 1,
-  settings: { rate: 0, currency: '£', breakMin: 0, weekStart: 1 },
-  active: null,          // { startISO } while clocked in
-  shifts: []             // { id, date:'YYYY-MM-DD', start:'HH:MM', end:'HH:MM', breakMin, rate, note }
-};
+/* Fresh objects, built from plain literals every time.
+   Deliberately NOT structuredClone(): it is missing below Chromium 98, and since this is
+   the first thing that runs it took the whole script down with it on Samsung Internet. */
+function defaultSettings() {
+  return { rate: 0, currency: '£', breakMin: 0, weekStart: 1 };
+}
+
+function defaultState() {
+  return {
+    v: 1,
+    settings: defaultSettings(),
+    active: null,        // { startISO } while clocked in
+    shifts: []           // { id, date:'YYYY-MM-DD', start:'HH:MM', end:'HH:MM', breakMin, rate, note }
+  };
+}
 
 let state = load();
 let ticker = null;
@@ -21,17 +30,17 @@ let period = 'month';
 function load() {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return structuredClone(DEFAULTS);
+    if (!raw) return defaultState();
     const data = JSON.parse(raw);
     return {
       v: 1,
-      settings: Object.assign(structuredClone(DEFAULTS.settings), data.settings || {}),
+      settings: Object.assign(defaultSettings(), data.settings || {}),
       active: data.active || null,
       shifts: Array.isArray(data.shifts) ? data.shifts : []
     };
   } catch (err) {
     console.error('Could not read saved data', err);
-    return structuredClone(DEFAULTS);
+    return defaultState();
   }
 }
 
@@ -514,7 +523,7 @@ $('btnCopy').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(text);
     toast('Summary copied');
-  } catch {
+  } catch (err) {
     const ta = document.createElement('textarea');
     ta.value = text;
     document.body.append(ta);
@@ -630,7 +639,7 @@ $('importFile').addEventListener('change', async (e) => {
     if (!confirm(`Replace everything with this backup (${data.shifts.length} shifts)?`)) return;
     state = {
       v: 1,
-      settings: Object.assign(structuredClone(DEFAULTS.settings), data.settings || {}),
+      settings: Object.assign(defaultSettings(), data.settings || {}),
       active: data.active || null,
       shifts: data.shifts
     };
@@ -648,7 +657,7 @@ $('importFile').addEventListener('change', async (e) => {
 $('btnWipe').addEventListener('click', () => {
   if (!confirm('Delete every shift and setting on this phone? This cannot be undone.')) return;
   if (!confirm('Really erase everything?')) return;
-  state = structuredClone(DEFAULTS);
+  state = defaultState();
   save();
   showView('now');
   toast('Everything erased');

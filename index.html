@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="app.css?v=2">
 </head>
 <body>
 
@@ -22,6 +22,8 @@
 </header>
 
 <main>
+
+  <div class="fatal" id="fatal" hidden></div>
 
   <!-- ───────────────────────── NOW ───────────────────────── -->
   <section class="view" id="view-now">
@@ -159,7 +161,7 @@
       <button class="btn wide" id="btnInstall" type="button">Install app</button>
     </div>
 
-    <p class="version">Hours · v1</p>
+    <p class="version">Hours · build 2</p>
     <div class="spacer"></div>
   </section>
 
@@ -234,6 +236,20 @@
 
 <div class="toast" id="toast" hidden></div>
 
-<script src="app.js"></script>
+<script>
+/* Deliberately old-fashioned syntax so this cannot itself fail on an older engine.
+   Without it, a script that dies on the way up leaves a page that looks perfectly
+   normal and simply ignores every tap - which is exactly what happened on build 1. */
+window.addEventListener('error', function (e) {
+  var box = document.getElementById('fatal');
+  if (!box) return;
+  var file = (e.filename || '').split('/').pop();
+  box.textContent = 'The app failed to start: ' + (e.message || 'unknown error') +
+    (file ? '  [' + file + ' line ' + (e.lineno || '?') + ']' : '') +
+    '  — please send this text to Claude.';
+  box.hidden = false;
+});
+</script>
+<script src="app.js?v=2"></script>
 </body>
 </html>

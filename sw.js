@@ -1,11 +1,15 @@
-/* Offline shell. Bump CACHE when any file below changes, or phones keep the old copy. */
-const CACHE = 'hours-v1';
+/* Offline shell.
+   Bump CACHE on every release. Build 2 also switched from cache-first to network-first:
+   the app is only ~50KB, and cache-first meant a broken build stayed broken on the phone
+   even after the fix was published. Offline still works - it just falls back to the cache. */
+const CACHE = 'hours-v2';
 
 const SHELL = [
   '.',
   'index.html',
-  'app.css',
-  'app.js',
+  'app.css?v=2',   // keep these query strings in step with index.html - the old cache-first
+  'app.js?v=2',    // worker only fetches a fresh copy if the URL itself changed
+
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',
@@ -27,31 +31,19 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
 
-  // Navigations: try the network so updates land, fall back to the cached page offline.
-  if (e.request.mode === 'navigate') {
-    e.respondWith(
-      fetch(e.request)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('index.html', copy));
-          return res;
-        })
-        .catch(() => caches.match('index.html'))
-    );
-    return;
-  }
-
-  // Everything else: cache first, refresh in the background.
   e.respondWith(
-    caches.match(e.request).then((hit) => {
-      const net = fetch(e.request).then((res) => {
+    fetch(e.request)
+      .then((res) => {
         if (res && res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then((c) => c.put(e.request, copy));
         }
         return res;
-      }).catch(() => hit);
-      return hit || net;
-    })
+      })
+      .catch(() =>
+        caches.match(e.request).then((hit) =>
+          hit || (e.request.mode === 'navigate' ? caches.match('index.html') : undefined)
+        )
+      )
   );
 });
