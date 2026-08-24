@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="app.css?v=2">
+<link rel="stylesheet" href="app.css?v=3">
 </head>
 <body>
 
@@ -66,11 +66,21 @@
       </div>
     </div>
 
+    <button class="owed" id="owedStrip" type="button" hidden>
+      <span class="owed-label" id="owedLabel">Still owed to you</span>
+      <strong class="owed-value" id="owedValue">£0.00</strong>
+      <span class="owed-sub" id="owedSub"></span>
+    </button>
+
     <button class="btn ghost wide" id="addShiftNow" type="button">+ Add a shift by hand</button>
   </section>
 
   <!-- ──────────────────────── SHIFTS ──────────────────────── -->
   <section class="view" id="view-shifts" hidden>
+    <label class="switch">
+      <input type="checkbox" id="hidePaid">
+      <span>Hide shifts already paid</span>
+    </label>
     <div id="shiftList"></div>
     <p class="empty" id="shiftsEmpty" hidden>No shifts yet.<br><span>Clock in on the Now tab, or add one by hand.</span></p>
     <div class="spacer"></div>
@@ -106,9 +116,12 @@
 
     <div class="report-table" id="repTable"></div>
 
+    <button class="btn wide" id="btnInvoice" type="button">Create invoice</button>
+    <p class="hint" id="invoiceHint"></p>
+
     <div class="report-actions">
-      <button class="btn" id="btnShare" type="button" hidden>Share</button>
-      <button class="btn" id="btnCopy" type="button">Copy summary</button>
+      <button class="btn ghost" id="btnShare" type="button" hidden>Share</button>
+      <button class="btn ghost" id="btnCopy" type="button">Copy summary</button>
       <button class="btn ghost" id="btnCsv" type="button">Download CSV</button>
     </div>
     <div class="spacer"></div>
@@ -147,6 +160,42 @@
     </div>
 
     <div class="card">
+      <h2>Invoice details</h2>
+      <p class="hint">These appear on the invoices you create. Leave anything blank and it is simply left off.</p>
+      <label class="field stack">
+        <span>Your name</span>
+        <input type="text" id="setYourName" maxlength="60" placeholder="the name you invoice under">
+      </label>
+      <label class="field stack">
+        <span>Your contact details</span>
+        <textarea id="setYourContact" rows="3" maxlength="300" placeholder="address, phone, email, UTR"></textarea>
+      </label>
+      <label class="field stack">
+        <span>Bill to</span>
+        <textarea id="setBillTo" rows="3" maxlength="300" placeholder="salon name and address"></textarea>
+      </label>
+      <label class="field stack">
+        <span>Payment details / terms</span>
+        <textarea id="setPayDetails" rows="3" maxlength="300" placeholder="sort code, account number, payment terms"></textarea>
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span>Invoice prefix</span>
+          <input type="text" id="setInvPrefix" maxlength="8" placeholder="INV-">
+        </label>
+        <label class="field">
+          <span>Next number</span>
+          <input type="number" id="setInvNext" inputmode="numeric" min="1" step="1">
+        </label>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Past invoices</h2>
+      <div id="invoiceList"></div>
+    </div>
+
+    <div class="card">
       <h2>Your data</h2>
       <p class="hint">Everything is stored on this phone only. Nothing is sent anywhere, and there is no account. If you clear the browser's storage or lose the phone, the data goes with it — so export a backup now and then.</p>
       <button class="btn ghost wide" id="btnExport" type="button">Export backup (.json)</button>
@@ -161,7 +210,7 @@
       <button class="btn wide" id="btnInstall" type="button">Install app</button>
     </div>
 
-    <p class="version">Hours · build 2</p>
+    <p class="version">Hours · build 3</p>
     <div class="spacer"></div>
   </section>
 
@@ -208,7 +257,13 @@
       <input type="text" id="fNote" maxlength="60" placeholder="e.g. covered for Kate">
     </label>
 
+    <label class="field check">
+      <span>Already paid</span>
+      <input type="checkbox" id="fPaid">
+    </label>
+
     <p class="calc" id="fCalc"></p>
+    <p class="calc-note" id="fInvoiceNote" hidden></p>
 
     <div class="dialog-actions">
       <button class="btn danger" value="delete" id="fDelete" type="submit" formnovalidate>Delete</button>
@@ -234,6 +289,25 @@
   </form>
 </dialog>
 
+<!-- ───────────────────── invoice ───────────────────── -->
+<div class="overlay" id="invoiceOverlay" hidden>
+  <div class="overlay-bar">
+    <button class="btn ghost small" id="invClose" type="button">Close</button>
+    <span class="overlay-title" id="invTitle">Invoice</span>
+    <button class="btn small" id="invPrint" type="button">Save / Print</button>
+  </div>
+
+  <div class="invoice-scroll">
+    <div class="invoice-sheet" id="invoiceSheet"></div>
+  </div>
+
+  <div class="overlay-bar bottom">
+    <button class="btn ghost small" id="invShare" type="button">Share</button>
+    <button class="btn ghost small" id="invDelete" type="button">Delete</button>
+    <button class="btn small" id="invPaid" type="button">Mark as paid</button>
+  </div>
+</div>
+
 <div class="toast" id="toast" hidden></div>
 
 <script>
@@ -250,6 +324,6 @@ window.addEventListener('error', function (e) {
   box.hidden = false;
 });
 </script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

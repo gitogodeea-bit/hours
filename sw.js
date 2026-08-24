@@ -1,23 +1,30 @@
 /* Offline shell.
-   Bump CACHE on every release. Build 2 also switched from cache-first to network-first:
-   the app is only ~50KB, and cache-first meant a broken build stayed broken on the phone
-   even after the fix was published. Offline still works - it just falls back to the cache. */
-const CACHE = 'hours-v2';
+   Bump CACHE on every release, and keep the ?v= query strings in step with index.html.
+   Network-first since build 2: the app is tiny, and cache-first meant a broken build
+   stayed broken on the phone even after the fix was published. Offline still works -
+   it just falls back to whatever is in the cache. */
+const CACHE = 'hours-v3';
 
 const SHELL = [
   '.',
   'index.html',
-  'app.css?v=2',   // keep these query strings in step with index.html - the old cache-first
-  'app.js?v=2',    // worker only fetches a fresh copy if the URL itself changed
-
+  'app.css?v=3',
+  'app.js?v=3',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/icon-maskable-512.png'
 ];
 
+/* Each file is added on its own. addAll() is all-or-nothing, so a single asset that
+   fails to fetch throws away the entire precache and leaves the app with nothing
+   offline; this way we keep whatever we did manage to get. */
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => Promise.all(SHELL.map((u) => c.add(u).catch(() => null))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {

@@ -103,3 +103,40 @@ Two lessons baked into the code:
 They were drawn by a PowerShell script using System.Drawing — teal `#0e6f6e` background,
 white clock at ten past ten. Any 192px and 512px PNG will do as a replacement; keep the
 filenames, or change them in both `manifest.webmanifest` and `sw.js`.
+
+## Invoicing (build 3)
+
+Added so that settled hours can be cleared from view **without deleting anything** — the
+previous workaround was erasing everything from Settings, which threw away the history too.
+
+A shift moves through two states, both optional and both reversible:
+
+| state | set by | what it does |
+|---|---|---|
+| **invoiced** | `invoiceNo` stamped on the shift | stops the same hours being billed twice |
+| **paid** | `paidOn` date stamped on the shift | takes it out of the outstanding balance |
+
+- **Report → Create invoice** bills every *un-invoiced* shift in the chosen period. Already
+  invoiced shifts are skipped, so pressing it twice cannot double-bill.
+- The invoice opens as a white "paper" sheet — it stays white in dark mode because it is a
+  document and it has to print. **Save / Print** uses the browser's own print dialogue,
+  where Chrome on Android offers *Save as PDF*.
+- **Mark as paid** stamps today's date on every shift on that invoice. The same button then
+  reverses it.
+- **Delete** removes the invoice but *keeps the shifts*, releasing them back to
+  un-invoiced and unpaid so they can be billed again.
+- The **Now** screen shows the running balance of everything worked and not yet paid for,
+  and says "All settled" rather than going blank once nothing is outstanding.
+- Invoice numbering is `prefix + zero-padded counter`, both editable in Settings.
+- Figures on an invoice are recomputed from the shifts each time it is opened, so
+  correcting a mistyped shift also corrects the invoice instead of leaving them disagreeing.
+
+Invoice details (your name, contact, who to bill, payment terms) live in Settings and are
+snapshotted onto each invoice when it is created.
+
+### A note on the service worker precache
+
+`install` adds each shell file individually rather than with `cache.addAll()`. `addAll()` is
+all-or-nothing: one asset that fails to fetch discards the whole precache and leaves the app
+with nothing offline. This is not theoretical — PHP's built-in dev server is single-threaded,
+so the eight parallel precache requests race it and some fail.

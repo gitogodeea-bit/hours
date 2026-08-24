@@ -7,7 +7,11 @@ const KEY = 'hours.v1';
    Deliberately NOT structuredClone(): it is missing below Chromium 98, and since this is
    the first thing that runs it took the whole script down with it on Samsung Internet. */
 function defaultSettings() {
-  return { rate: 0, currency: '£', breakMin: 0, weekStart: 1 };
+  return {
+    rate: 0, currency: '£', breakMin: 0, weekStart: 1,
+    yourName: '', yourContact: '', billTo: '', payDetails: '',
+    invoicePrefix: 'INV-', nextInvoiceNo: 1
+  };
 }
 
 function defaultState() {
@@ -15,7 +19,11 @@ function defaultState() {
     v: 1,
     settings: defaultSettings(),
     active: null,        // { startISO } while clocked in
-    shifts: []           // { id, date:'YYYY-MM-DD', start:'HH:MM', end:'HH:MM', breakMin, rate, note }
+    // { id, date:'YYYY-MM-DD', start:'HH:MM', end:'HH:MM', breakMin, rate, note }
+    // once billed a shift also carries invoiceNo, and once settled paidOn:'YYYY-MM-DD'
+    shifts: [],
+    // { no, issued, from, to, shiftIds, mins, total, and a snapshot of the invoice details }
+    invoices: []
   };
 }
 
@@ -36,7 +44,8 @@ function load() {
       v: 1,
       settings: Object.assign(defaultSettings(), data.settings || {}),
       active: data.active || null,
-      shifts: Array.isArray(data.shifts) ? data.shifts : []
+      shifts: Array.isArray(data.shifts) ? data.shifts : [],
+      invoices: Array.isArray(data.invoices) ? data.invoices : []
     };
   } catch (err) {
     console.error('Could not read saved data', err);
@@ -129,6 +138,23 @@ function shiftsBetween(from, to) {
     .sort((a, b) => (a.date === b.date ? toMin(a.start) - toMin(b.start) : a.date < b.date ? -1 : 1));
 }
 
+/* ── invoicing state ──
+   A shift is "billed" once it carries an invoiceNo, and "settled" once it has a paidOn
+   date. Nothing is ever deleted to clear the slate - that is the whole point. */
+
+const isBilled  = (s) => !!s.invoiceNo;
+const isSettled = (s) => !!s.paidOn;
+
+/** Everything worked but not yet paid for, oldest first. */
+function outstanding() {
+  return state.shifts
+    .filter((s) => !isSettled(s))
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+}
+
+const sumMins = (list) => list.reduce((a, s) => a + shiftMinutes(s), 0);
+const sumPay  = (list) => list.reduce((a, s) => a + shiftPay(s), 0);
+
 /** Live minutes on the shift in progress, if any. */
 function activeMinutes() {
   if (!state.active) return 0;
@@ -220,6 +246,39 @@ function renderTotals() {
   $('totalToday').textContent = fmtHM(t.mins);  $('payToday').textContent = money(t.pay);
   $('totalWeek').textContent  = fmtHM(w.mins);  $('payWeek').textContent  = money(w.pay);
   $('totalMonth').textContent = fmtHM(m.mins);  $('payMonth').textContent = money(m.pay);
+
+  renderOwed();
+}
+
+/** The running balance - what you have worked and not been paid for, all time. */
+function renderOwed() {
+  const owed = outstanding();
+  const strip = $('owedStrip');
+
+  // nothing recorded yet: no balance to talk about
+  if (!state.shifts.length) { strip.hidden = true; return; }
+  strip.hidden = false;
+
+  // say so explicitly rather than silently vanishing - that is the whole reassurance
+  if (!owed.length) {
+    strip.classList.add('is-clear');
+    $('owedLabel').textContent = 'Nothing outstanding';
+    $('owedValue').textContent = 'All settled';
+    $('owedSub').textContent =
+      `${state.shifts.length} shift${state.shifts.length === 1 ? '' : 's'} recorded, all paid for`;
+    return;
+  }
+
+  strip.classList.remove('is-clear');
+  $('owedLabel').textContent = 'Still owed to you';
+
+  const billed = owed.filter(isBilled).length;
+  const bits = [`${fmtHM(sumMins(owed))} over ${owed.length} shift${owed.length === 1 ? '' : 's'}`];
+  bits.push(billed ? `${billed} already invoiced` : 'none invoiced yet');
+  bits.push(`since ${fmtDay.format(fromISO(owed[0].date))}`);
+
+  $('owedValue').textContent = money(sumPay(owed));
+  $('owedSub').textContent = bits.join(' · ');
 }
 
 /** Nag if a shift has been running more than 16 hours — almost always a forgotten clock-out. */
@@ -279,11 +338,22 @@ function renderShifts() {
   const box = $('shiftList');
   box.textContent = '';
 
-  const list = [...state.shifts].sort(
+  const all = [...state.shifts].sort(
     (a, b) => (a.date === b.date ? toMin(b.start) - toMin(a.start) : a.date < b.date ? 1 : -1)
   );
 
-  $('shiftsEmpty').hidden = list.length > 0;
+  // the filter is only worth showing once something has actually been paid
+  const anyPaid = all.some(isSettled);
+  document.querySelector('.switch').hidden = !anyPaid;
+  const list = ($('hidePaid').checked && anyPaid) ? all.filter((s) => !isSettled(s)) : all;
+
+  const empty = $('shiftsEmpty');
+  empty.hidden = list.length > 0;
+  if (!all.length) {
+    empty.innerHTML = 'No shifts yet.<br><span>Clock in on the Now tab, or add one by hand.</span>';
+  } else if (!list.length) {
+    empty.innerHTML = 'Nothing outstanding.<br><span>Every shift has been paid for. Untick above to see them.</span>';
+  }
 
   const add = document.createElement('button');
   add.className = 'btn wide';
@@ -311,17 +381,21 @@ function renderShifts() {
 function shiftRow(s) {
   const d = fromISO(s.date);
   const row = document.createElement('button');
-  row.className = 'shift';
+  row.className = 'shift' + (isSettled(s) ? ' is-paid' : '');
   row.type = 'button';
 
   const bits = [];
   if (s.breakMin) bits.push(`${s.breakMin}m break`);
   bits.push(`${money(s.rate)}/hr`);
+  if (s.invoiceNo) bits.push(s.invoiceNo);
   if (s.note) bits.push(s.note);
+
+  const pill = isSettled(s) ? '<span class="pill is-paid">PAID</span>'
+             : isBilled(s)  ? '<span class="pill is-billed">INVOICED</span>' : '';
 
   row.innerHTML =
     `<span class="shift-day"><span class="dow">${fmtDow.format(d)}</span><span class="dom">${d.getDate()}</span></span>` +
-    `<span class="shift-mid"><span class="shift-times">${s.start} – ${s.end}</span>` +
+    `<span class="shift-mid"><span class="shift-times">${s.start} – ${s.end}${pill}</span>` +
     `<span class="shift-meta">${escapeHtml(bits.join(' · '))}</span></span>` +
     `<span class="shift-right"><span class="shift-hrs">${fmtHM(shiftMinutes(s))}</span>` +
     `<span class="shift-pay">${money(shiftPay(s))}</span></span>`;
@@ -351,7 +425,15 @@ function openShift(id) {
   $('fBreak').value = s ? (s.breakMin || 0) : (Number(state.settings.breakMin) || 0);
   $('fRate').value = s ? s.rate : (Number(state.settings.rate) || 0);
   $('fNote').value = s ? (s.note || '') : '';
+  $('fPaid').checked = s ? isSettled(s) : false;
   $('fDelete').hidden = !s;
+
+  const invNote = $('fInvoiceNote');
+  invNote.hidden = !(s && s.invoiceNo);
+  if (s && s.invoiceNo) {
+    invNote.textContent = `On invoice ${s.invoiceNo}` +
+      (s.paidOn ? ` · paid ${fmtDay.format(fromISO(s.paidOn))}` : ' · not paid yet');
+  }
 
   updateCalc();
   shiftDialog.showModal();
@@ -382,6 +464,7 @@ shiftDialog.addEventListener('close', () => {
     save();
     toast('Shift deleted');
   } else if (action === 'save') {
+    const prev = editingId ? state.shifts.find((x) => x.id === editingId) : null;
     const shift = {
       id: editingId || uid(),
       date: $('fDate').value,
@@ -391,6 +474,10 @@ shiftDialog.addEventListener('close', () => {
       rate: Math.max(0, Number($('fRate').value) || 0),
       note: $('fNote').value.trim()
     };
+    // billing state is not editable here, but it must survive an edit
+    if (prev && prev.invoiceNo) shift.invoiceNo = prev.invoiceNo;
+    if ($('fPaid').checked) shift.paidOn = (prev && prev.paidOn) || isoDate(new Date());
+
     const i = state.shifts.findIndex((x) => x.id === shift.id);
     if (i >= 0) state.shifts[i] = shift; else state.shifts.push(shift);
     save();
@@ -448,6 +535,7 @@ function renderReport() {
     $('repPay').textContent = money(0);
     $('repSub').textContent = '';
     table.innerHTML = '<p class="rt-none">No dates chosen.</p>';
+    updateInvoiceButton([]);
     return;
   }
 
@@ -465,6 +553,7 @@ function renderReport() {
   parts.push(rates.length > 1 ? 'mixed rates' : `${money(rates[0] || state.settings.rate)}/hr`);
   if (mins) parts.push(`${(mins / 60).toFixed(2)} decimal hours`);
   $('repSub').textContent = parts.join(' · ');
+  updateInvoiceButton(list);
 
   if (!list.length) {
     table.innerHTML = '<p class="rt-none">No shifts in this period.</p>';
@@ -540,15 +629,16 @@ $('btnCsv').addEventListener('click', () => {
   if (!list.length) { toast('Nothing to export'); return; }
 
   const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-  const rows = [['Date', 'Start', 'End', 'Break (min)', 'Hours', 'Rate', 'Pay', 'Note']];
+  const rows = [['Date', 'Start', 'End', 'Break (min)', 'Hours', 'Rate', 'Pay', 'Invoice', 'Paid on', 'Note']];
   for (const s of list) {
     rows.push([s.date, s.start, s.end, s.breakMin || 0,
-      (shiftMinutes(s) / 60).toFixed(2), (s.rate || 0).toFixed(2), shiftPay(s).toFixed(2), s.note || '']);
+      (shiftMinutes(s) / 60).toFixed(2), (s.rate || 0).toFixed(2), shiftPay(s).toFixed(2),
+      s.invoiceNo || '', s.paidOn || '', s.note || '']);
   }
-  const mins = list.reduce((a, s) => a + shiftMinutes(s), 0);
+  const mins = sumMins(list);
   rows.push([]);
   rows.push(['Total', '', '', '', (mins / 60).toFixed(2), '',
-    list.reduce((a, s) => a + shiftPay(s), 0).toFixed(2), '']);
+    sumPay(list).toFixed(2), '', '', '']);
 
   const csv = '﻿' + rows.map((r) => r.map(q).join(',')).join('\r\n');
   download(new Blob([csv], { type: 'text/csv' }), `hours_${from}_to_${to}.csv`);
@@ -566,13 +656,255 @@ function download(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 4000);
 }
 
+/* ───────────────────────── invoices ─────────────────────────
+   An invoice claims a set of shifts by stamping them with its number, so the same hours
+   can never be billed twice. Marking it paid stamps a date on those shifts, which is what
+   takes them out of the outstanding balance - nothing is deleted to clear the slate. */
+
+let viewingInvoice = null;
+
+function updateInvoiceButton(list) {
+  const billable = (list || []).filter((s) => !isBilled(s));
+  $('btnInvoice').disabled = billable.length === 0;
+
+  $('invoiceHint').textContent =
+    !list || !list.length ? 'Nothing in this period to invoice.'
+    : !billable.length    ? 'Every shift in this period is already on an invoice.'
+    : `${billable.length} shift${billable.length === 1 ? '' : 's'} not yet invoiced · ` +
+      `${fmtHM(sumMins(billable))} · ${money(sumPay(billable))}`;
+}
+
+function invoiceShifts(inv) {
+  return inv.shiftIds
+    .map((id) => state.shifts.find((s) => s.id === id))
+    .filter(Boolean)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : toMin(a.start) - toMin(b.start)));
+}
+
+const invoiceIsPaid = (shifts) => shifts.length > 0 && shifts.every(isSettled);
+
+$('btnInvoice').addEventListener('click', () => {
+  const [from, to] = periodRange();
+  if (!from || !to || from > to) { toast('Pick a period first'); return; }
+
+  const billable = shiftsBetween(from, to).filter((s) => !isBilled(s));
+  if (!billable.length) { toast('Nothing left to invoice in this period'); return; }
+
+  const st = state.settings;
+  const no = (st.invoicePrefix || 'INV-') + String(Number(st.nextInvoiceNo) || 1).padStart(3, '0');
+
+  const inv = {
+    no,
+    issued: isoDate(new Date()),
+    from, to,
+    shiftIds: billable.map((s) => s.id),
+    mins: sumMins(billable),
+    total: sumPay(billable),
+    currency: st.currency,
+    yourName: st.yourName,
+    yourContact: st.yourContact,
+    billTo: st.billTo,
+    payDetails: st.payDetails
+  };
+
+  for (const s of billable) s.invoiceNo = no;
+  state.invoices.push(inv);
+  st.nextInvoiceNo = (Number(st.nextInvoiceNo) || 1) + 1;
+  save();
+
+  renderReport();
+  renderShifts();
+  renderNow();
+  openInvoice(no);
+  toast(`${no} created`);
+});
+
+function openInvoice(no) {
+  const inv = state.invoices.find((i) => i.no === no);
+  if (!inv) { toast('That invoice no longer exists'); return; }
+
+  viewingInvoice = no;
+  $('invTitle').textContent = inv.no;
+  $('invoiceSheet').innerHTML = invoiceHtml(inv);
+  $('invPaid').textContent = invoiceIsPaid(invoiceShifts(inv)) ? 'Mark as unpaid' : 'Mark as paid';
+  $('invoiceOverlay').hidden = false;
+  document.body.classList.add('no-scroll');
+}
+
+function closeInvoice() {
+  $('invoiceOverlay').hidden = true;
+  document.body.classList.remove('no-scroll');
+  viewingInvoice = null;
+}
+
+/** Figures are recomputed from the shifts rather than the stored snapshot, so correcting
+    a mistyped shift also corrects the invoice instead of leaving the two disagreeing. */
+function invoiceHtml(inv) {
+  const shifts = invoiceShifts(inv);
+  const sym = inv.currency || state.settings.currency || '£';
+  const cash = (n) => sym + Math.abs(Number(n) || 0).toFixed(2);
+  const block = (t) => escapeHtml(t || '').replace(/\n/g, '<br>');
+  const mins = sumMins(shifts);
+  const total = sumPay(shifts);
+
+  const rows = shifts.map((s) =>
+    `<tr><td>${escapeHtml(fmtDay.format(fromISO(s.date)))}</td>` +
+    `<td>${s.start}–${s.end}${s.breakMin ? ` <span class="muted">(−${s.breakMin}m)</span>` : ''}</td>` +
+    `<td class="num">${(shiftMinutes(s) / 60).toFixed(2)}</td>` +
+    `<td class="num">${cash(s.rate)}</td>` +
+    `<td class="num">${cash(shiftPay(s))}</td></tr>`
+  ).join('');
+
+  const stamp = invoiceIsPaid(shifts)
+    ? `<p class="inv-stamp">PAID${shifts[0].paidOn ? ' · ' + escapeHtml(fmtDay.format(fromISO(shifts[0].paidOn))) : ''}</p>`
+    : '';
+
+  const from = inv.yourName
+    ? `<strong>${escapeHtml(inv.yourName)}</strong>${inv.yourContact ? '<br>' + block(inv.yourContact) : ''}`
+    : block(inv.yourContact) || '<span class="muted">add your details in Settings</span>';
+
+  return `
+    <div class="inv-head">
+      <div><h1>Invoice</h1><p class="inv-no">${escapeHtml(inv.no)}</p></div>
+      <div class="inv-meta">
+        <p><span>Issued</span>${escapeHtml(fmtDay.format(fromISO(inv.issued)))}</p>
+        <p><span>Period</span>${escapeHtml(fmtDay.format(fromISO(inv.from)))} – ${escapeHtml(fmtDay.format(fromISO(inv.to)))}</p>
+      </div>
+    </div>
+    ${stamp}
+    <div class="inv-parties">
+      <div><h2>From</h2><p>${from}</p></div>
+      <div><h2>Bill to</h2><p>${block(inv.billTo) || '<span class="muted">add this in Settings</span>'}</p></div>
+    </div>
+    <table class="inv-table">
+      <thead><tr><th>Date</th><th>Worked</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr><td colspan="2">Total</td><td class="num">${(mins / 60).toFixed(2)}</td><td></td><td class="num">${cash(total)}</td></tr></tfoot>
+    </table>
+    <p class="inv-due">Amount due <strong>${cash(total)}</strong></p>
+    ${inv.payDetails ? `<div class="inv-pay"><h2>Payment</h2><p>${block(inv.payDetails)}</p></div>` : ''}
+  `;
+}
+
+function invoiceText(inv) {
+  const shifts = invoiceShifts(inv);
+  const sym = inv.currency || state.settings.currency || '£';
+  const cash = (n) => sym + Math.abs(Number(n) || 0).toFixed(2);
+
+  const lines = [`Invoice ${inv.no}`, `Issued ${fmtDay.format(fromISO(inv.issued))}`];
+  if (inv.yourName) lines.push(`From: ${inv.yourName}`);
+  lines.push(`Period: ${fmtDay.format(fromISO(inv.from))} – ${fmtDay.format(fromISO(inv.to))}`, '');
+  for (const s of shifts) {
+    lines.push(`${fmtDay.format(fromISO(s.date))}  ${s.start}–${s.end}` +
+      `${s.breakMin ? ` (−${s.breakMin}m)` : ''}  ${(shiftMinutes(s) / 60).toFixed(2)}h  ${cash(shiftPay(s))}`);
+  }
+  lines.push('', `Total ${(sumMins(shifts) / 60).toFixed(2)} hours`, `Amount due ${cash(sumPay(shifts))}`);
+  if (inv.payDetails) lines.push('', inv.payDetails);
+  return lines.join('\n');
+}
+
+$('invClose').addEventListener('click', closeInvoice);
+$('invPrint').addEventListener('click', () => window.print());
+
+$('invShare').addEventListener('click', async () => {
+  const inv = state.invoices.find((i) => i.no === viewingInvoice);
+  if (!inv) return;
+  const text = invoiceText(inv);
+  if (navigator.share) {
+    try { await navigator.share({ title: inv.no, text }); return; }
+    catch (err) { if (err.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(text); toast('Invoice copied'); }
+  catch (err) { toast('Could not share'); }
+});
+
+$('invPaid').addEventListener('click', () => {
+  const inv = state.invoices.find((i) => i.no === viewingInvoice);
+  if (!inv) return;
+
+  const shifts = invoiceShifts(inv);
+  if (!shifts.length) { toast('This invoice has no shifts left on it'); return; }
+
+  const wasPaid = invoiceIsPaid(shifts);
+  const today = isoDate(new Date());
+  for (const s of shifts) {
+    if (wasPaid) delete s.paidOn; else s.paidOn = today;
+  }
+  save();
+
+  openInvoice(inv.no);
+  renderShifts();
+  renderNow();
+  renderReport();
+  toast(wasPaid
+    ? `${inv.no} back to unpaid`
+    : `${shifts.length} shift${shifts.length === 1 ? '' : 's'} marked paid`);
+});
+
+$('invDelete').addEventListener('click', () => {
+  const inv = state.invoices.find((i) => i.no === viewingInvoice);
+  if (!inv) return;
+  if (!confirm(`Delete invoice ${inv.no}?\n\nThe shifts on it are kept — they go back to being uninvoiced and unpaid, so you can bill them again.`)) return;
+
+  for (const s of invoiceShifts(inv)) { delete s.invoiceNo; delete s.paidOn; }
+  state.invoices = state.invoices.filter((i) => i.no !== inv.no);
+  save();
+
+  closeInvoice();
+  renderShifts();
+  renderNow();
+  renderReport();
+  renderInvoiceList();
+  toast(`${inv.no} deleted`);
+});
+
+$('owedStrip').addEventListener('click', () => showView('report'));
+
+$('hidePaid').addEventListener('change', renderShifts);
+
+function renderInvoiceList() {
+  const box = $('invoiceList');
+  box.textContent = '';
+
+  if (!state.invoices.length) {
+    box.innerHTML = '<p class="hint">None yet. Create one from the Report tab.</p>';
+    return;
+  }
+
+  for (const inv of [...state.invoices].reverse()) {
+    const shifts = invoiceShifts(inv);
+    const paid = invoiceIsPaid(shifts);
+    const b = document.createElement('button');
+    b.className = 'inv-row';
+    b.type = 'button';
+    b.innerHTML =
+      `<span class="inv-row-main"><span class="inv-row-no">${escapeHtml(inv.no)}` +
+      `${paid ? '<span class="pill is-paid">PAID</span>' : ''}</span>` +
+      `<span class="inv-row-meta">${escapeHtml(fmtDay.format(fromISO(inv.issued)))} · ` +
+      `${shifts.length} shift${shifts.length === 1 ? '' : 's'} · ${fmtHM(sumMins(shifts))}</span></span>` +
+      `<span class="inv-row-total">${money(sumPay(shifts))}</span>`;
+    b.addEventListener('click', () => openInvoice(inv.no));
+    box.append(b);
+  }
+}
+
 /* ───────────────────────── the Settings screen ───────────────────────── */
 
 function renderSettings() {
-  $('setRate').value = state.settings.rate;
-  $('setCurrency').value = state.settings.currency;
-  $('setBreak').value = state.settings.breakMin;
-  $('setWeekStart').value = String(state.settings.weekStart);
+  const st = state.settings;
+  $('setRate').value = st.rate;
+  $('setCurrency').value = st.currency;
+  $('setBreak').value = st.breakMin;
+  $('setWeekStart').value = String(st.weekStart);
+
+  $('setYourName').value = st.yourName || '';
+  $('setYourContact').value = st.yourContact || '';
+  $('setBillTo').value = st.billTo || '';
+  $('setPayDetails').value = st.payDetails || '';
+  $('setInvPrefix').value = st.invoicePrefix || '';
+  $('setInvNext').value = st.nextInvoiceNo || 1;
+
+  renderInvoiceList();
   $('installCard').hidden = !installEvent;
 }
 
@@ -596,6 +928,32 @@ $('setWeekStart').addEventListener('change', () => {
   state.settings.weekStart = Number($('setWeekStart').value);
   save();
   renderNow();
+});
+
+/* free-text invoice details - they only ever get printed, so no validation needed */
+const TEXT_SETTINGS = {
+  setYourName: 'yourName',
+  setYourContact: 'yourContact',
+  setBillTo: 'billTo',
+  setPayDetails: 'payDetails'
+};
+for (const id of Object.keys(TEXT_SETTINGS)) {
+  $(id).addEventListener('change', () => {
+    state.settings[TEXT_SETTINGS[id]] = $(id).value.trim();
+    save();
+    toast('Invoice details saved');
+  });
+}
+
+$('setInvPrefix').addEventListener('change', () => {
+  state.settings.invoicePrefix = $('setInvPrefix').value.trim();
+  save();
+});
+
+$('setInvNext').addEventListener('change', () => {
+  state.settings.nextInvoiceNo = Math.max(1, Math.floor(Number($('setInvNext').value) || 1));
+  $('setInvNext').value = state.settings.nextInvoiceNo;
+  save();
 });
 
 /* backdated pay rises: push the current rate onto shifts already saved */
@@ -641,7 +999,8 @@ $('importFile').addEventListener('change', async (e) => {
       v: 1,
       settings: Object.assign(defaultSettings(), data.settings || {}),
       active: data.active || null,
-      shifts: data.shifts
+      shifts: data.shifts,
+      invoices: Array.isArray(data.invoices) ? data.invoices : []
     };
     save();
     showView('now');
