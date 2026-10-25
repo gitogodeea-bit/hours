@@ -23,6 +23,8 @@ function defaultState() {
     // once billed a shift also carries invoiceNo, and once settled paidOn:'YYYY-MM-DD'
     shifts: [],
     // { no, issued, from, to, shiftIds, mins, total, and a snapshot of the invoice details }
+    // an invoice may also carry extras: money paid out of pocket and claimed back
+    //   extras: [{ id, date:'YYYY-MM-DD', desc, amount }]
     invoices: []
   };
 }
@@ -45,12 +47,22 @@ function load() {
       settings: Object.assign(defaultSettings(), data.settings || {}),
       active: data.active || null,
       shifts: Array.isArray(data.shifts) ? data.shifts : [],
-      invoices: Array.isArray(data.invoices) ? data.invoices : []
+      /* Invoices made before build 4 have no extras. Given one here rather than
+         guarded at every use, so the rest of the file can just read inv.extras. */
+      invoices: normaliseInvoices(data.invoices)
     };
   } catch (err) {
     console.error('Could not read saved data', err);
     return defaultState();
   }
+}
+
+function normaliseInvoices(list) {
+  if (!Array.isArray(list)) return [];
+  for (const inv of list) {
+    if (!Array.isArray(inv.extras)) inv.extras = [];
+  }
+  return list;
 }
 
 function save() {
@@ -255,12 +267,18 @@ function renderOwed() {
   const owed = outstanding();
   const strip = $('owedStrip');
 
+  /* Money laid out and not yet repaid counts towards the balance just as much as
+     unpaid hours do - it is the same question, "what am I still owed". */
+  const unpaidExtras = state.invoices
+    .filter((inv) => !invoiceIsPaid(inv))
+    .reduce((a, inv) => a + sumExtras(invoiceExtras(inv)), 0);
+
   // nothing recorded yet: no balance to talk about
-  if (!state.shifts.length) { strip.hidden = true; return; }
+  if (!state.shifts.length && !unpaidExtras) { strip.hidden = true; return; }
   strip.hidden = false;
 
   // say so explicitly rather than silently vanishing - that is the whole reassurance
-  if (!owed.length) {
+  if (!owed.length && !unpaidExtras) {
     strip.classList.add('is-clear');
     $('owedLabel').textContent = 'Nothing outstanding';
     $('owedValue').textContent = 'All settled';
@@ -272,12 +290,16 @@ function renderOwed() {
   strip.classList.remove('is-clear');
   $('owedLabel').textContent = 'Still owed to you';
 
-  const billed = owed.filter(isBilled).length;
-  const bits = [`${fmtHM(sumMins(owed))} over ${owed.length} shift${owed.length === 1 ? '' : 's'}`];
-  bits.push(billed ? `${billed} already invoiced` : 'none invoiced yet');
-  bits.push(`since ${fmtDay.format(fromISO(owed[0].date))}`);
+  const bits = [];
+  if (owed.length) {
+    const billed = owed.filter(isBilled).length;
+    bits.push(`${fmtHM(sumMins(owed))} over ${owed.length} shift${owed.length === 1 ? '' : 's'}`);
+    bits.push(billed ? `${billed} already invoiced` : 'none invoiced yet');
+    bits.push(`since ${fmtDay.format(fromISO(owed[0].date))}`);
+  }
+  if (unpaidExtras) bits.push(`${money(unpaidExtras)} paid on their behalf`);
 
-  $('owedValue').textContent = money(sumPay(owed));
+  $('owedValue').textContent = money(sumPay(owed) + unpaidExtras);
   $('owedSub').textContent = bits.join(' · ');
 }
 
@@ -681,14 +703,44 @@ function invoiceShifts(inv) {
     .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : toMin(a.start) - toMin(b.start)));
 }
 
-const invoiceIsPaid = (shifts) => shifts.length > 0 && shifts.every(isSettled);
+/** Money claimed back on this invoice that was never hours worked. */
+const invoiceExtras = (inv) => (Array.isArray(inv.extras) ? inv.extras : []);
+const sumExtras = (list) => list.reduce((a, e) => a + (Number(e.amount) || 0), 0);
+
+/** An invoice's grand total: the hours on it plus anything paid out of pocket. */
+function invoiceTotal(inv) {
+  return sumPay(invoiceShifts(inv)) + sumExtras(invoiceExtras(inv));
+}
+
+/* Paid is still recorded on the shifts, because that is what the Shifts tab and the
+   outstanding balance read. An invoice of expenses alone has no shifts to carry it,
+   so it keeps its own paidOn; both are written together and either can answer. */
+function invoiceIsPaid(inv) {
+  const shifts = invoiceShifts(inv);
+  if (shifts.length) return shifts.every(isSettled);
+  return !!inv.paidOn;
+}
+
+/** When this invoice was settled, for the PAID stamp. */
+function invoicePaidOn(inv) {
+  if (inv.paidOn) return inv.paidOn;
+  const shifts = invoiceShifts(inv);
+  return shifts.length ? shifts[0].paidOn : null;
+}
 
 $('btnInvoice').addEventListener('click', () => {
   const [from, to] = periodRange();
   if (!from || !to || from > to) { toast('Pick a period first'); return; }
 
   const billable = shiftsBetween(from, to).filter((s) => !isBilled(s));
-  if (!billable.length) { toast('Nothing left to invoice in this period'); return; }
+
+  /* An invoice with no hours on it is still worth raising when the month's claim is
+     money laid out rather than time worked. Asked rather than assumed, because the
+     usual reason for landing here is picking the wrong period. */
+  if (!billable.length &&
+      !confirm('No uninvoiced shifts in this period.\n\nCreate an empty invoice anyway, so you can add things you paid for out of your own money?')) {
+    return;
+  }
 
   const st = state.settings;
   const no = (st.invoicePrefix || 'INV-') + String(Number(st.nextInvoiceNo) || 1).padStart(3, '0');
@@ -698,6 +750,7 @@ $('btnInvoice').addEventListener('click', () => {
     issued: isoDate(new Date()),
     from, to,
     shiftIds: billable.map((s) => s.id),
+    extras: [],
     mins: sumMins(billable),
     total: sumPay(billable),
     currency: st.currency,
@@ -726,7 +779,7 @@ function openInvoice(no) {
   viewingInvoice = no;
   $('invTitle').textContent = inv.no;
   $('invoiceSheet').innerHTML = invoiceHtml(inv);
-  $('invPaid').textContent = invoiceIsPaid(invoiceShifts(inv)) ? 'Mark as unpaid' : 'Mark as paid';
+  $('invPaid').textContent = invoiceIsPaid(inv) ? 'Mark as unpaid' : 'Mark as paid';
   $('invoiceOverlay').hidden = false;
   document.body.classList.add('no-scroll');
 }
@@ -755,8 +808,36 @@ function invoiceHtml(inv) {
     `<td class="num">${cash(shiftPay(s))}</td></tr>`
   ).join('');
 
-  const stamp = invoiceIsPaid(shifts)
-    ? `<p class="inv-stamp">PAID${shifts[0].paidOn ? ' · ' + escapeHtml(fmtDay.format(fromISO(shifts[0].paidOn))) : ''}</p>`
+  /* Money paid out of pocket. The description spans the time columns, because an
+     expense has no hours and no rate and leaving those cells empty reads as a
+     mistake. data-extra carries the id so a tap on the row can edit it. */
+  const extras = invoiceExtras(inv);
+  const extraRows = extras.map((e) =>
+    `<tr class="inv-extra" data-extra="${escapeHtml(e.id)}">` +
+    `<td>${e.date ? escapeHtml(fmtDay.format(fromISO(e.date))) : ''}</td>` +
+    `<td colspan="3">${escapeHtml(e.desc || 'Expense')}</td>` +
+    `<td class="num">${cash(e.amount)}</td></tr>`
+  ).join('');
+
+  const extraHead = extras.length
+    ? `<tr class="inv-section"><td colspan="5">Paid on your behalf</td></tr>`
+    : '';
+
+  const hoursTotal = total;
+  const extrasTotal = sumExtras(extras);
+  const grand = hoursTotal + extrasTotal;
+
+  /* Only split the footer out when there is something to split. An invoice of
+     hours alone keeps the single Total line it has always had. */
+  const foot = extras.length
+    ? `<tr class="inv-sub"><td colspan="2">Hours</td><td class="num">${(mins / 60).toFixed(2)}</td><td></td><td class="num">${cash(hoursTotal)}</td></tr>` +
+      `<tr class="inv-sub"><td colspan="4">Paid on your behalf</td><td class="num">${cash(extrasTotal)}</td></tr>` +
+      `<tr><td colspan="4">Total</td><td class="num">${cash(grand)}</td></tr>`
+    : `<tr><td colspan="2">Total</td><td class="num">${(mins / 60).toFixed(2)}</td><td></td><td class="num">${cash(grand)}</td></tr>`;
+
+  const paidOn = invoicePaidOn(inv);
+  const stamp = invoiceIsPaid(inv)
+    ? `<p class="inv-stamp">PAID${paidOn ? ' · ' + escapeHtml(fmtDay.format(fromISO(paidOn))) : ''}</p>`
     : '';
 
   const from = inv.yourName
@@ -778,10 +859,10 @@ function invoiceHtml(inv) {
     </div>
     <table class="inv-table">
       <thead><tr><th>Date</th><th>Worked</th><th class="num">Hours</th><th class="num">Rate</th><th class="num">Amount</th></tr></thead>
-      <tbody>${rows}</tbody>
-      <tfoot><tr><td colspan="2">Total</td><td class="num">${(mins / 60).toFixed(2)}</td><td></td><td class="num">${cash(total)}</td></tr></tfoot>
+      <tbody>${rows}${extraHead}${extraRows}</tbody>
+      <tfoot>${foot}</tfoot>
     </table>
-    <p class="inv-due">Amount due <strong>${cash(total)}</strong></p>
+    <p class="inv-due">Amount due <strong>${cash(grand)}</strong></p>
     ${inv.payDetails ? `<div class="inv-pay"><h2>Payment</h2><p>${block(inv.payDetails)}</p></div>` : ''}
   `;
 }
@@ -798,10 +879,95 @@ function invoiceText(inv) {
     lines.push(`${fmtDay.format(fromISO(s.date))}  ${s.start}–${s.end}` +
       `${s.breakMin ? ` (−${s.breakMin}m)` : ''}  ${(shiftMinutes(s) / 60).toFixed(2)}h  ${cash(shiftPay(s))}`);
   }
-  lines.push('', `Total ${(sumMins(shifts) / 60).toFixed(2)} hours`, `Amount due ${cash(sumPay(shifts))}`);
+  const extras = invoiceExtras(inv);
+  if (extras.length) {
+    lines.push('', 'Paid on your behalf:');
+    for (const e of extras) {
+      lines.push(`${e.date ? fmtDay.format(fromISO(e.date)) + '  ' : ''}${e.desc || 'Expense'}  ${cash(e.amount)}`);
+    }
+  }
+
+  lines.push('', `Total ${(sumMins(shifts) / 60).toFixed(2)} hours`);
+  if (extras.length) {
+    lines.push(`Hours ${cash(sumPay(shifts))}`, `Paid on your behalf ${cash(sumExtras(extras))}`);
+  }
+  lines.push(`Amount due ${cash(invoiceTotal(inv))}`);
   if (inv.payDetails) lines.push('', inv.payDetails);
   return lines.join('\n');
 }
+
+/* ── items paid out of pocket ──
+   Added to the open invoice, not to a shift: they are not time, and they must not
+   turn up in the hours totals or the Report tab. */
+
+const extraDialog = $('extraDialog');
+let editingExtra = null;   // the id being edited, or null when adding
+
+function openExtra(id) {
+  const inv = state.invoices.find((i) => i.no === viewingInvoice);
+  if (!inv) return;
+
+  editingExtra = id || null;
+  const e = id ? invoiceExtras(inv).find((x) => x.id === id) : null;
+
+  $('extraDialogTitle').textContent = e ? 'Edit item' : 'Add an item';
+  $('xDesc').value = e ? (e.desc || '') : '';
+  $('xAmount').value = e ? e.amount : '';
+  $('xDate').value = e && e.date ? e.date : isoDate(new Date());
+  $('xDelete').hidden = !e;
+
+  extraDialog.showModal();
+}
+
+extraDialog.addEventListener('close', () => {
+  const action = extraDialog.returnValue;
+  const inv = state.invoices.find((i) => i.no === viewingInvoice);
+  if (!inv) { editingExtra = null; return; }
+  if (!Array.isArray(inv.extras)) inv.extras = [];
+
+  if (action === 'delete' && editingExtra) {
+    inv.extras = inv.extras.filter((x) => x.id !== editingExtra);
+    save();
+    toast('Item removed');
+  } else if (action === 'save') {
+    const amount = Math.max(0, Number($('xAmount').value) || 0);
+    const desc = $('xDesc').value.trim();
+    if (!desc || !amount) {
+      // A blank line on an invoice is worse than no line; say so and keep the dialog shut.
+      toast('Needs a description and an amount');
+      editingExtra = null;
+      return;
+    }
+    const item = { id: editingExtra || uid(), date: $('xDate').value, desc, amount };
+    if (editingExtra) {
+      inv.extras = inv.extras.map((x) => (x.id === editingExtra ? item : x));
+    } else {
+      inv.extras.push(item);
+    }
+    inv.extras.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    save();
+    toast(editingExtra ? 'Item updated' : 'Item added');
+  } else {
+    editingExtra = null;
+    return;
+  }
+
+  editingExtra = null;
+  openInvoice(inv.no);      // redraw the sheet with the new figures
+  renderInvoiceList();
+  renderNow();
+});
+
+$('invAddExtra').addEventListener('click', () => openExtra(null));
+
+/* The sheet is rebuilt as innerHTML on every change, so the rows cannot each carry a
+   listener - one delegated click on the sheet survives the redraws. */
+$('invoiceSheet').addEventListener('click', (ev) => {
+  const row = ev.target.closest ? ev.target.closest('tr.inv-extra') : null;
+  if (!row) return;
+  const id = row.getAttribute('data-extra');
+  if (id) openExtra(id);
+});
 
 $('invClose').addEventListener('click', closeInvoice);
 $('invPrint').addEventListener('click', () => window.print());
@@ -823,22 +989,24 @@ $('invPaid').addEventListener('click', () => {
   if (!inv) return;
 
   const shifts = invoiceShifts(inv);
-  if (!shifts.length) { toast('This invoice has no shifts left on it'); return; }
+  if (!shifts.length && !invoiceExtras(inv).length) {
+    toast('This invoice has nothing on it'); return;
+  }
 
-  const wasPaid = invoiceIsPaid(shifts);
+  const wasPaid = invoiceIsPaid(inv);
   const today = isoDate(new Date());
   for (const s of shifts) {
     if (wasPaid) delete s.paidOn; else s.paidOn = today;
   }
+  // Written on the invoice too, so one of expenses only can still be settled.
+  if (wasPaid) delete inv.paidOn; else inv.paidOn = today;
   save();
 
   openInvoice(inv.no);
   renderShifts();
   renderNow();
   renderReport();
-  toast(wasPaid
-    ? `${inv.no} back to unpaid`
-    : `${shifts.length} shift${shifts.length === 1 ? '' : 's'} marked paid`);
+  toast(wasPaid ? `${inv.no} back to unpaid` : `${inv.no} marked paid`);
 });
 
 $('invDelete').addEventListener('click', () => {
@@ -873,7 +1041,8 @@ function renderInvoiceList() {
 
   for (const inv of [...state.invoices].reverse()) {
     const shifts = invoiceShifts(inv);
-    const paid = invoiceIsPaid(shifts);
+    const extras = invoiceExtras(inv);
+    const paid = invoiceIsPaid(inv);
     const b = document.createElement('button');
     b.className = 'inv-row';
     b.type = 'button';
@@ -881,8 +1050,9 @@ function renderInvoiceList() {
       `<span class="inv-row-main"><span class="inv-row-no">${escapeHtml(inv.no)}` +
       `${paid ? '<span class="pill is-paid">PAID</span>' : ''}</span>` +
       `<span class="inv-row-meta">${escapeHtml(fmtDay.format(fromISO(inv.issued)))} · ` +
-      `${shifts.length} shift${shifts.length === 1 ? '' : 's'} · ${fmtHM(sumMins(shifts))}</span></span>` +
-      `<span class="inv-row-total">${money(sumPay(shifts))}</span>`;
+      `${shifts.length} shift${shifts.length === 1 ? '' : 's'} · ${fmtHM(sumMins(shifts))}` +
+      `${extras.length ? ` · ${extras.length} item${extras.length === 1 ? '' : 's'}` : ''}</span></span>` +
+      `<span class="inv-row-total">${money(invoiceTotal(inv))}</span>`;
     b.addEventListener('click', () => openInvoice(inv.no));
     box.append(b);
   }

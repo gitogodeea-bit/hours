@@ -536,6 +536,26 @@ body.no-scroll { overflow: hidden; }
 .inv-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .inv-table tfoot td { font-weight: 700; border-bottom: none; border-top: 1.5px solid #c9d6d4; }
 
+/* Money paid out of pocket, listed under the hours. The sub-heading row is what
+   stops an expense reading as a shift with its columns gone missing. */
+.inv-table .inv-section td {
+  padding-top: 14px;
+  font-size: 0.64rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #6d7f7d;
+  border-bottom: 1px solid #c9d6d4;
+}
+.inv-table .inv-extra td { cursor: pointer; }
+.inv-table .inv-extra:hover td { background: #f3f7f6; }
+/* The subtotal lines are supporting arithmetic; only the Total is the figure. */
+.inv-table tfoot .inv-sub td {
+  font-weight: 400;
+  color: #4a5d5b;
+  border-top: none;
+}
+.inv-table tfoot .inv-sub:first-child td { border-top: 1.5px solid #c9d6d4; }
+
 .inv-due { margin-top: 18px !important; text-align: right; font-size: 1.05rem; }
 .inv-due strong { font-size: 1.35rem; letter-spacing: -0.02em; margin-left: 8px; }
 .inv-pay { margin-top: 24px; padding-top: 14px; border-top: 1px solid #e2e9e8; }

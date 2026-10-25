@@ -12,7 +12,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="app.css?v=3">
+<link rel="stylesheet" href="app.css?v=4">
 </head>
 <body>
 
@@ -210,7 +210,7 @@
       <button class="btn wide" id="btnInstall" type="button">Install app</button>
     </div>
 
-    <p class="version">Hours · build 3</p>
+    <p class="version">Hours · build 4</p>
     <div class="spacer"></div>
   </section>
 
@@ -302,11 +302,43 @@
   </div>
 
   <div class="overlay-bar bottom">
+    <button class="btn ghost small" id="invAddExtra" type="button">Add item</button>
     <button class="btn ghost small" id="invShare" type="button">Share</button>
     <button class="btn ghost small" id="invDelete" type="button">Delete</button>
     <button class="btn small" id="invPaid" type="button">Mark as paid</button>
   </div>
 </div>
+
+<!-- Money paid out of pocket for the salon and claimed back on the invoice.
+     Same shape as the shift editor: a dialog, one form, Delete on the left. -->
+<dialog id="extraDialog">
+  <form method="dialog" id="extraForm">
+    <h2 id="extraDialogTitle">Add an item</h2>
+
+    <label class="field">
+      <span>What it was</span>
+      <input type="text" id="xDesc" maxlength="120" placeholder="e.g. shampoo for the salon" required>
+    </label>
+    <div class="field-row">
+      <label class="field">
+        <span>Amount you paid</span>
+        <input type="number" id="xAmount" step="0.01" min="0" inputmode="decimal" placeholder="0.00" required>
+      </label>
+      <label class="field">
+        <span>Date you paid</span>
+        <input type="date" id="xDate">
+      </label>
+    </div>
+
+    <p class="calc-note">Added to the invoice on top of your hours.</p>
+
+    <div class="dialog-actions">
+      <button class="btn danger" value="delete" id="xDelete" type="submit" formnovalidate>Delete</button>
+      <button class="btn ghost" value="cancel" type="submit" formnovalidate>Cancel</button>
+      <button class="btn" value="save" id="xSave" type="submit">Save</button>
+    </div>
+  </form>
+</dialog>
 
 <div class="toast" id="toast" hidden></div>
 
@@ -324,6 +356,6 @@ window.addEventListener('error', function (e) {
   box.hidden = false;
 });
 </script>
-<script src="app.js?v=3"></script>
+<script src="app.js?v=4"></script>
 </body>
 </html>
